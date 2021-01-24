@@ -4,8 +4,10 @@ program smallppm;
 
 uses classes,math,uVect,uBMP,SysUtils,getopts;//WriteBMPにCLAMPとかも入れる
 const
-  ALPHA=0.7;
-  primes:array[0..60] of integer=(
+   ALPHA                          = 0.7;
+   PhotonBallRadius               = 3;
+   PhotonBallRadiusPlus           = PhotonBallRadius+0.1;
+   primes:array[0..60] of integer = (
       2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,
       83,89,97,101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,
       191,193,197,199,211,223,227,229,233,239,241,251,257,263,269,271,277,281,283
@@ -201,6 +203,8 @@ TYPE
 
 var
   sph:TList;
+  RLight,GLight,BLight : SphereClass;
+
 procedure InitScene;
 begin
   sph:=TList.Create;
@@ -213,6 +217,7 @@ begin
   sph.add( SphereClass.Create(16.5,CreateVec(27,16.5,47),       CreateVec(1,1,1)*0.999, SPEC) );//Mirror
   sph.add( SphereClass.Create(16.5,CreateVec(73,16.5,88),       CreateVec(1,1,1)*0.999, REFR) );//Glass
   sph.add( SphereClass.Create(8.5, CreateVec(50,8.5,60),        CreateVec(1,1,1)*0.999, DIFF) );//Middle
+   sph.add(SphereClass.Create(PhotonBallRadius,CreateVec(50   ,60,      85)   ,CreateVec(1,  1,  1)*0.999,DIFF));
 end;
 
 // tone mapping and gamma correction
@@ -261,16 +266,38 @@ begin
     pr.d:=CreateVec(cos(p)*st,cos(t),sin(p)*st);
     pr.o:=CreateVec(50,60,85);
 end;
-
-procedure GenPhoton(var pr:RayRecord;var f:VecRecord;i:integer);
+procedure genp2(var pr:RayRecord;var f:VecRecord;i:integer);
 var
     p,t,st:real;
 begin
-   f := CreateVec(2500,2500,2500)*(PI*4.0); // flux
+    f := CreateVec(2500,2500,2500)*(PI*4.0); // flux
+    p:=2.0*PI*hal(0,i);t:=2.0*arccos(sqrt(1.0-hal(1,i)));
+    st:=sin(t);
+    pr.d:=CreateVec(cos(p)*st,cos(t),sin(p)*st);
+    pr.o:=CreateVec(50,60,85);
+end;
+
+procedure GenPhoton(var pr : RayRecord;var f:VecRecord;i:integer;LightCount:integer);
+var
+    p,t,st:real;
+begin
+   case LightCount of
+     1 : f:=CreateVec( 500,1500,1500);
+     2 : f:=CreateVec(1500, 500,1500);
+     3 : f:=CreateVec(1500,1500, 500);
+   end;
+   f := CreateVec(1500,1500,1500)*(PI*4.0); // flux
    p:=2.0*PI*hal(0,i);t:=2.0*arccos(sqrt(1.0-hal(1,i)));
    st:=sin(t);
    pr.d:=CreateVec(cos(p)*st,cos(t),sin(p)*st);
-   pr.o:=CreateVec(50,60,85)+VecNorm(pr.d)*10;
+   Case LightCount of
+     1 : pr.o:=RLight.p;
+     2 : pr.o:=GLight.p;
+     3 : pr.o:=BLight.p;
+   end;
+   
+//   pr.o:=CreateVec(50,60,85)+VecNorm(pr.d)*PhotonBallRadiusPlus;
+  // IF hal(2,i)>0.5 THEN pr.d:=pr.d*(-1);
 end;
 
 
@@ -419,22 +446,23 @@ end;
 
 var
   w,h,samps,y,x	: integer;
-  i,j,m		: integer;
-  cam,r		: RayRecord;
-  d,cx,cy,vw,f	: VecRecord;
-  c		: array of VecRecord;
-  BMPIO		: BMPIOClass;
-  p		: real;
-  lst		: pList;
-  hp		: pHPoint;
-  T1,T2		: TDateTime;
-  HH,MM,SS,MS	: WORD;
-  co		: char;
+   i,j,m,n	: integer;
+   cam,r		: RayRecord;
+   d,cx,cy,vw,f	: VecRecord;
+   c		: array of VecRecord;
+   BMPIO	: BMPIOClass;
+   p		: real;
+   lst		: pList;
+   hp		: pHPoint;
+   T1,T2		: TDateTime;
+   HH,MM,SS,MS	: WORD;
+   co		: char;
    ArgInt	: integer;
    ArgFN,FN		: String;
 BEGIN
     hitpoints:=Nil;
     InitScene;
+   samps:=1000;
    FN:='out.bmp';
     // samps * 1000 photon paths will be traced
     w:=1024;    h:=768;
@@ -468,10 +496,7 @@ BEGIN
   until co=endofoptions;
    
     BMPIO:=BMPIOClass.Create(w,h);
-    IF ParamCount>=1 THEN 
-       samps:=StrToInt(ParamStr(1) )
-    ELSE
-       samps:=1000;
+
   T1:=Time;
   Writeln ('The time is : ',TimeToStr(Time));
 
@@ -510,9 +535,8 @@ writeln(' Before Hash');
         m:=1000*i;
        IF i mod 100 =0 THEN Writeln(' %=',FloatToStrf(p,ffFixed,2,1));
         for j:=0 to 1000-1 do begin
-            genp(r,f,m+j);
-//           GenPhoton(r,f,m+j);
-            trace(r,0,false,f,vw,m+j);
+           Genp2(r,f,m+j);
+           trace(r,0,false,f,vw,m+j);
         end;
     end;
 
