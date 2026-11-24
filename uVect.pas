@@ -1,186 +1,357 @@
-﻿UNIT uVect;
-{$MODE objfpc}
+unit uVect;
+{$MODE objfpc}{$H+}
 {$INLINE ON}
+{$modeswitch advancedrecords}
+{$codepage utf8} // ← これを追加！
 
-INTERFACE
+interface
 
-USES
-    sysutils,WriteBMP,math;
-TYPE
-    Refl_t=(DIFF,SPEC,REFR);// material types, used in radiance()
-{
-	DIFFUSE,    // 完全拡散面。いわゆるLambertian面。
-	SPECULAR,   // 理想的な鏡面。
-	REFRACTION, // 理想的なガラス的物質。
-}
-    VecRecord=Record
-        x,y,z:real;
-    end;
-    RayRecord=Record
-       o, d:VecRecord;
-     end;
-   function CreateRay(o_,d_:VecRecord):RayRecord;
-   function ColToRGB(v:VecRecord):rgbColor;
+uses
+   {$ifdef unix}
+   cthreads,cmem,
+   cwstring, // ← Linux/Unix環境でUTF-8(System/WideString)を正しく扱うために必須
+   {$endif}
+   sysutils,uBMP,fpImage,math;
+
 const
-   BackGroundColor:VecRecord = (x:0;y:0;z:0);
-   ZeroVec:VecRecord = (x:0;y:0;z:0);
+   MAX_WORD = High(WORD);//FPColor.redと書きたいが難しい？
+   rev_max_word= 1/MAX_WORD;
+   eps=1e-4;
+   INF=1e20;
+
+type
+   RandomRecord = record
+   private
+      const
+         N = 624;
+         MATRIX_A = $9908B0DF;
+         UPPER_MASK = $80000000;
+         LOWER_MASK = $7FFFFFFF;
+      var
+         FState: array[0..N - 1] of Cardinal;
+         FIndex: Integer;
+         procedure Twist;inline;
+   public
+      constructor Create(seed_: Cardinal);
+      function Random: real;inline;
+   end;
+
+   Vec3=record
+      x,y,z:real;
+      class function new(x_,y_,z_:real):Vec3;static;inline;
+      function Norm:Vec3;inline;
+      function len:real;inline;
+      function Dot(const V2 :Vec3):real;inline;//内積
+      function Cross(const V2 :Vec3):Vec3;inline;//外積
+      function Mult(const V2:Vec3):Vec3;inline;
+      function Neg:Vec3;
+      class operator * (const v1: Vec3; const r: real): Vec3; inline;
+      class operator / (const v1: Vec3; const r: real): Vec3; inline;
+      class operator * (const v1, v2: Vec3): real; inline; // 内積
+      class operator / (const v1, v2: Vec3): Vec3; inline; // 外積
+      class operator + (const v1, v2: Vec3): Vec3; inline;
+      class operator - (const v1, v2: Vec3): Vec3; inline;
+      class operator + (const v1: Vec3; const r: real): Vec3; inline;
+      class operator - (const v1: Vec3; const r: real): Vec3; inline;
+      property r: Real read x write x;
+      property g: Real read y write y;
+      property b: Real read z write z;
+   end;
    
-function CreateVec(x_,y_,z_:real):VecRecord;
-FUNCTION VecMul(V1,V2:VecRecord):VecRecord;inline;
-FUNCTION VecNeg(V:VecRecord):VecRecord;
-FUNCTION Veclen(V:VecRecord):real;inline;
-FUNCTION VecNorm(V:VecRecord):VecRecord;inline;
-FUNCTION VecDot(V1,V2 :VecRecord):real;//内積
-FUNCTION VecCross(V1,V2 :VecRecord):VecRecord;//外積
-FUNCTION VecAdd3(V1,V2,V3:VecRecord):VecRecord;
-procedure VecWriteln(V:VecRecord);
+   RayRecord=record
+      o, d:Vec3;
+      class function new(o_,d_:Vec3):RayRecord;static;
+   end;
+    
+   CamRecord=record
+      o,d:Vec3;
+      PlaneDist:real;
+      w,h,samps:integer;
+      cx,cy:Vec3;
+      class function new(o_,d_:Vec3;w_,h_,samps_:integer):CamRecord;static;
+      function GetRay(x,y,sx,sy:integer):RayRecord;
+      procedure CamWrite;
+   end;
 
-operator * (v1:VecRecord;r:real)v:VecRecord;inline;
-operator / (v1:VecRecord;r:real)v:VecRecord;inline;
-operator + (v1,v2:VecRecord)v:VecRecord;inline;
-operator - (v1,v2:VecRecord)v:VecRecord;inline;
-operator + (v1:VecRecord;r:real)v:VecRecord;inline;
-operator - (v1:VecRecord;r:real)v:VecRecord;inline;
+   Vec2=record
+      u,v:real;
+      function DirToUV(d:Vec3):Vec2;
+   end;
+      
+   function ClampVector(v:Vec3):Vec3;
+   function ColToRGB(v:Vec3):TFPColor;
+   function RGBtoColor(c:TFPColor):Vec3;inline;
+const
+   BackGroundColor:Vec3 = (x:0;y:0;z:0);
+   ZeroVec:Vec3 = (x:0;y:0;z:0);
+   INFVec:Vec3=(x:INF*2;y:INF*2;z:INF*2);
+   DefaultPosition:Vec3=(x:50.0; y:52.0; z:295.6);
+   DefaultDirection:Vec3=(x:0.0; y:-0.042612; z:-1.0);
 
-IMPLEMENTATION
+function VecAdd3(V1,V2,V3:Vec3):Vec3;
+procedure VecWriteln(V:Vec3);
+procedure WriteVec(v:Vec3);
+function isINF(v:Vec3):boolean;
 
-function CreateVec(x_,y_,z_:real):VecRecord;
-BEGIN
-    result.x:=x_;result.y:=y_;result.z:=z_;
-END;
-function CreateRay(o_,d_:VecRecord):RayRecord;
+threadvar
+   rnd:RandomRecord;
+
+implementation
+
+function isINF(v:Vec3):boolean;
 begin
-    result.o:=o_;
-    result.d:=d_;
+   if (v.x>INF) and (v.y>INF) and (v.z>INF) then result := true else result:=false;
 end;
 
-FUNCTION VecMul(V1,V2:VecRecord):VecRecord;inline;
-BEGIN
-    result.x:=V1.x*V2.x;
-    result.y:=V1.y*V2.y;
-    result.z:=V1.z*V2.z;
-END;
+class function Vec3.new(x_,y_,z_:real):Vec3;static;inline;
+begin
+   result.x:=x_;result.y:=y_;result.z:=z_;
+end;
 
-FUNCTION VecNeg(V:VecRecord):VecRecord;
-BEGIN
-    result.x:=-V.x;
-    result.y:=-V.y;
-    result.z:=-V.z;
-END;
-FUNCTION Veclen(V:VecRecord):real;inline;
-BEGIN
-   result:=sqrt(V.x*V.x+V.y*V.y+V.z*V.z);
-END;
+function Vec3.Norm:Vec3;inline;
+begin
+   result:=self/sqrt(x*x+y*y+z*z);
+end;
 
-FUNCTION VecNorm(V:VecRecord):VecRecord;inline;
-BEGIN
-    result:=V/VecLen(V) ;
-END;
-FUNCTION VecDot(V1,V2 :VecRecord):real;//内積
-BEGIN
-    result:=v1.x*v2.x+v1.y*v2.y+v1.z*v2.z;
-END;
-FUNCTION VecCross(V1,V2 :VecRecord):VecRecord;//外積
-BEGIN
-    result.x:=V1.y * v2.z - v2.y * V1.z;
-    result.y:=V1.z * v2.x - v2.z * V1.x;
-    result.z:=V1.x * v2.y - v2.x * V1.y;
-END;
-FUNCTION VecAdd3(V1,V2,V3:VecRecord):VecRecord;
-BEGIN
+function Vec3.len:real;inline;
+begin
+   result:=sqrt(x*x+y*y+z*z);
+end;
+
+function Vec3.Dot(const V2 :Vec3):real;inline;//内積
+begin
+    result:=x*v2.x+y*v2.y+z*v2.z;
+end;
+
+function Vec3.Cross(const V2 :Vec3):Vec3;inline;//外積
+begin
+    result.x:=y * v2.z - v2.y * z;
+    result.y:=z * v2.x - v2.z * x;
+    result.z:=x * v2.y - v2.x * y;
+end;
+
+function Vec3.Mult(const V2:Vec3):Vec3;inline;
+begin
+    result.x:=x*V2.x;
+    result.y:=y*V2.y;
+    result.z:=z*V2.z;
+end;
+
+function Vec3.Neg:Vec3;
+begin
+    result.x:=-x;
+    result.y:=-y;
+    result.z:=-z;
+end;
+
+class function RayRecord.new(o_,d_:Vec3):RayRecord;
+begin
+   result.o:=o_;
+   result.d:=d_;
+ end;
+
+function VecAdd3(V1,V2,V3:Vec3):Vec3;
+begin
     result.x:=V1.x+V2.x+V3.x;
     result.y:=V1.y+V2.y+V3.y;
     result.z:=V1.z+V2.z+V3.z;
-    
-END;
+end;
 
-procedure VecWriteln(V:VecRecord);
+procedure VecWriteln(V:Vec3);
 begin
-    Writeln(v.x,':',v.y,':',v.z);
+    writeln(v.x:7:3,':',v.y:7:3,':',v.z:7:3);
+end;
+
+procedure WriteVec(v:Vec3);
+begin
+   write('(',v.x:7:3,':',v.y:7:3,':',v.z:7:3,')');
+end;
+
+class operator Vec3.* (const v1: Vec3; const r: real): Vec3; inline;
+begin
+   result.x := v1.x * r;
+   result.y := v1.y * r;
+   result.z := v1.z * r;
+end;
+
+class operator Vec3./ (const v1: Vec3; const r: real): Vec3; inline;
+begin
+   result.x := v1.x / r;
+   result.y := v1.y / r;
+   result.z := v1.z / r;
+end;
+
+class operator Vec3.* (const v1, v2: Vec3): real; inline; // 内積
+begin
+   result := v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+end;
+
+class operator Vec3./ (const v1, v2: Vec3): Vec3; inline; // 外積
+begin
+   result.x := v1.y * v2.z - v2.y * v1.z;
+   result.y := v1.z * v2.x - v2.z * v1.x;
+   result.z := v1.x * v2.y - v2.x * v1.y;
+end;
+
+class operator Vec3.+ (const v1, v2: Vec3): Vec3; inline;
+begin
+   result.x := v1.x + v2.x;
+   result.y := v1.y + v2.y;
+   result.z := v1.z + v2.z;
+end;
+
+class operator Vec3.- (const v1, v2: Vec3): Vec3; inline;
+begin
+   result.x := v1.x - v2.x;
+   result.y := v1.y - v2.y;
+   result.z := v1.z - v2.z;
+end;
+
+class operator Vec3.+ (const v1: Vec3; const r: real): Vec3; inline;
+begin
+   result.x := v1.x + r;
+   result.y := v1.y + r;
+   result.z := v1.z + r;
+end;
+
+class operator Vec3.- (const v1: Vec3; const r: real): Vec3; inline;
+begin
+   result.x := v1.x - r;
+   result.y := v1.y - r;
+   result.z := v1.z - r;
+end;
+
+function ClampVector(v:Vec3):Vec3;
+begin
+  result.r:=EnsureRange(v.r,0,1);
+  result.g:=EnsureRange(v.g,0,1);
+  result.b:=EnsureRange(v.b,0,1);
+end;
+
+function ColToWord(x:real):Word;inline;
+begin
+    result:=trunc(power(x,1/2.2)* MAX_WORD +0.5);
+end;
+
+function ColToRGB(v:Vec3):TFPColor;
+begin
+    result.red:=ColToWord(v.r);
+    result.green:=ColToWord(v.g);
+    result.blue:=ColToWord(v.b);
+end;
+
+function RGBtoColor(c:TFPColor):Vec3;inline;
+begin
+   result.r:=c.red*rev_MAX_WORD;
+   result.g:=c.green*rev_MAX_WORD;
+   result.b:=c.blue*rev_MAX_WORD;
+end;
+
+class function CamRecord.new(o_,d_:Vec3;w_,h_,samps_:integer):CamRecord;
+begin
+   result.o:=o_;
+   result.d:=d_.norm;
+   result.w:=w_;
+   result.h:=h_;
+   result.samps:=samps_;
+   result.cx:=Vec3.new(result.w * 0.5135 / result.h, 0, 0);
+   result.cy:= (result.cx/ result.d).norm* 0.5135;
+   result.PlaneDist:=140;
+end;
+
+function CamRecord.GetRay(x,y,sx,sy:integer):RayRecord;
+var
+   r1,r2,dx,dy:real;
+   dirct:Vec3;
+begin
+   r1 := 2 * rnd.random;
+   if (r1 < 1) then dx := sqrt(r1) - 1 else dx := 1 - sqrt(2 - r1);
+   r2 := 2 * rnd.random;
+   if (r2 < 1) then dy := sqrt(r2) - 1 else dy := 1 - sqrt(2 - r2);
+   dirct:= cy* (((sy + 0.5 + dy) / 2 + (h - y - 1)) / h - 0.5)
+      +cx* (((sx + 0.5 + dx) / 2 + x) / w - 0.5)
+      +d;
+   dirct:=dirct.norm;
+   result.o:= dirct* PlaneDist+o;
+   result.d := dirct;
+end;
+
+procedure CamRecord.CamWrite;
+var
+   r:RayRecord;
+begin
+   write(' o=');VecWriteln(o);
+   write(' d=');VecWriteln(d);
+   write(' cx=');VecWriteln(cx);
+   write(' cy=');VecWriteln(cy);
+   writeln('===0,0==');
+   r:=GetRay(0,0,0,0);
+   write(' r.o=');VecWriteln(r.o);
+   write(' r.d=');VecWriteln(r.d);
+   writeln('===320,240==');
+   r:=GetRay(320,240,0,0);
+   write(' r.o=');VecWriteln(r.o);
+   write(' r.d=');VecWriteln(r.d);   
 end;
 
 
-operator * (v1:VecRecord;r:real)v:VecRecord;inline;
+function Vec2.DirToUV(d:Vec3):Vec2;
+var
+  ClampedZ: Double;
 begin
-   v.x:=v1.x*r;
-   v.y:=v1.y*r;
-   v.z:=v1.z*r;
+   d:=d.norm;
+   Result.U := 0.5 - (ArcTan2(d.z, d.x) / (2.0 * Pi));
+
+   // ArcSin に渡す値のクランプ (-1.0 ～ 1.0) で NaN を防止
+   ClampedZ := EnsureRange(d.y, -1.0, 1.0);
+   
+   // 上が V=0 の場合
+   Result.V := 0.5 - (ArcSin(ClampedZ) / Pi);
 end;
 
-operator / (v1:VecRecord;r:real)v:VecRecord;inline;
+constructor RandomRecord.Create(seed_: Cardinal);
+var
+   i: Integer;
 begin
-   v.x:=v1.x/r;
-   v.y:=v1.y/r;
-   v.z:=v1.z/r;
+   FState[0] := seed_ and $FFFFFFFF;
+   for i := 1 to N - 1 do begin
+      FState[i] := 1812433253 * (FState[i - 1] xor (FState[i - 1] shr 30)) + i;
+      FState[i] := FState[i] and $FFFFFFFF;
+   end;
+   FIndex := N;
 end;
 
-operator + (v1,v2:VecRecord)v:VecRecord;inline;
+procedure RandomRecord.Twist;
+var
+   i: Integer;
+   y: Cardinal;
 begin
-   v.x:=v1.x+v2.x;
-   v.y:=v1.y+v2.y;
-   v.z:=v1.z+v2.z;
+   for i := 0 to N - 1 do  begin
+      y := (FState[i] and UPPER_MASK) or (FState[(i + 1) mod N] and LOWER_MASK);
+      FState[i] := FState[(i + 156) mod N] xor (y shr 1);
+      if (y and 1) <> 0 then FState[i] := FState[i] xor MATRIX_A;
+   end;
+   FIndex := 0;
 end;
 
-operator - (v1,v2:VecRecord)v:VecRecord;inline;
+function RandomRecord.Random: real;inline;
+var
+   y: Cardinal;
 begin
-    v.x:=v1.x-v2.x;
-    v.y:=v1.y-v2.y;
-    v.z:=v1.z-v2.z;
-end;
+   if FIndex >= N then Twist;
 
-operator + (v1:VecRecord;r:real)v:VecRecord;inline;
-begin
-   v.x:=v1.x+r;
-   v.y:=v1.y+r;
-   v.z:=v1.z+r;
-end;
-operator - (v1:VecRecord;r:real)v:VecRecord;inline;
-begin
-    v.x:=v1.x-r;
-    v.y:=v1.y-r;
-    v.z:=v1.z-r;
+   y := FState[FIndex];
+   Inc(FIndex);
+
+   // 攪拌（Tempering）処理
+   y := y xor (y shr 11);   y := y xor ((y shl 7) and $9D2C5680);
+   y := y xor ((y shl 15) and $EFC60000);   y := y xor (y shr 18);
+
+   // [0, 1) の範囲の浮動小数点数に変換
+   Result := y / 4294967296.0;
 end;
 
 
-function Clamp(x:real):real;inline;
 begin
-   IF x<0 then exit(0);
-   IF x>1 then exit(1);
-   exit(x);
-end;
-
-function ColToByte(x:real):byte;inline;
-begin
-    result:=trunc(power(clamp(x),1/2.2)*255+0.5);
-end;
-function ColToRGB(v:VecRecord):rgbColor;
-begin
-    result.r:=ColToByte(v.x);
-    result.g:=ColToByte(v.y);
-    result.b:=ColToByte(v.z);
-end;
-
-BEGIN
-END.
-/*/$Log: rpdef.pas,v $
-/*/Revision 2.2  2017/08/29 13:06:30  average
-/*/とりあえず、徐々にBDPTの導入を始める
-/*/
-/*/Revision 2.1  2017/08/28 16:10:54  average
-/*/設定ファイルの読み書き導入
-/*/
-/*/Revision 1.1  2017/08/28 13:05:49  average
-/*/Initial revision
-/*/
-/*/Revision 1.5  2017/08/27 06:30:43  average
-/*/Operator Inlineを導入
-/*/
-/*/Revision 1.4  2016/11/28 13:53:54  average
-/*/変えた
-/*/
-//Revision 1.3  2016/11/23 13:04:34  average
-//デバッグスタを入れる
-//
-//Revision 1.2  2016/11/22 16:02:48  average
-//テストでんがな
-////
+end.
+   

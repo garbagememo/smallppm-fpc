@@ -1,6 +1,7 @@
 program smallppm;
 {$MODE objfpc}
 {$INLINE ON}
+{$modeswitch advancedrecords}
 
 uses classes,math,uVect,uBMP,SysUtils,getopts;//WriteBMPにCLAMPとかも入れる
 const
@@ -12,6 +13,9 @@ const
   );
   inf=1e20;
 
+type
+   RefType=(DIFF,SPEC,REFR);
+  
 function rev(i,p:integer):integer;inline;
 begin
   if i=0 then result:=i else result:=p-i; 
@@ -32,10 +36,10 @@ end;
 
 type
    AABBRecord=Record
-      vMin,vMax:VecRecord;
+      vMin,vMax:Vec3;
    end;
 
-procedure AABBFit(var AB:AABBRecord;p:VecRecord);inline;
+procedure AABBFit(var AB:AABBRecord;p:Vec3);inline;
 begin
   IF p.x<AB.vMin.x THEN AB.vMin.x:=p.x; // min
   IF p.y<AB.vMin.y THEN AB.vMin.y:=p.y; // min
@@ -54,7 +58,7 @@ end;
 
 type
   HPointRecord=record
-    f,pos,nrm,flux:VecRecord;
+    f,pos,nrm,flux:Vec3;
     r2:real;
     n:LongWord;//n=N/ALPHA
     pix:integer;
@@ -97,7 +101,7 @@ procedure build_hash_grid(w,h:integer) ;
 var
   lst:pList;
   hp:pHpoint;
-  ssize,BMin,BMax:VecRecord;
+  ssize,BMin,BMax:Vec3;
   irad:real;
   vphoton:integer;
   i,iz,izs,ize,iy,iys,iye,ix,ixs,ixe:integer;
@@ -166,23 +170,23 @@ end;
 TYPE
   SphereClass=Class
     rad:real;
-    p,c:VecRecord;
+    p,c:Vec3;
     refl:RefType;
-    constructor Create(r_:real;p_,c_:VecRecord;re_:RefType);
+    constructor Create(r_:real;p_,c_:Vec3;re_:RefType);
     function intersect(var r:RayRecord):real;
   END;
-  constructor SphereClass.Create(r_:real;p_,c_:VecRecord;re_:RefType);
+  constructor SphereClass.Create(r_:real;p_,c_:Vec3;re_:RefType);
   begin
     rad:=r_;p:=p_;c:=c_;refl:=re_;
   end;
   function SphereClass.intersect(var r:RayRecord):real;
   var
-    op:VecRecord;
+    op:Vec3;
     t,b,det:real;
   begin
     op:=p-r.o; 
-    b:=VecDot(op,r.d); 
-    det:=b*b-VecDot(op,op)+rad*rad;
+    b:=op*r.d; 
+    det:=b*b-op*op+rad*rad;
     IF det < 0 THEN begin
        result:= INF ;exit;
     end
@@ -204,32 +208,15 @@ var
 procedure InitScene;
 begin
   sph:=TList.Create;
-  sph.add( SphereClass.Create(1e5, CreateVec( 1e5+1,40.8,81.6), CreateVec(0.75,0.25,0.25),DIFF) );//Left
-  sph.add( SphereClass.Create(1e5, CreateVec(-1e5+99,40.8,81.6),CreateVec(0.25,0.25,0.75),DIFF) );//Right
-  sph.add( SphereClass.Create(1e5, CreateVec(50,40.8, 1e5),     CreateVec(0.75,0.75,0.75),DIFF) );//Back
-  sph.add( SphereClass.Create(1e5, CreateVec(50,40.8,-1e5+170), CreateVec(0,0,0),      DIFF) );//Front
-  sph.add( SphereClass.Create(1e5, CreateVec(50, 1e5, 81.6),    CreateVec(0.75,0.75,0.75),DIFF) );//Bottomm
-  sph.add( SphereClass.Create(1e5, CreateVec(50,-1e5+81.6,81.6),CreateVec(0.75,0.75,0.75),DIFF) );//Top
-  sph.add( SphereClass.Create(16.5,CreateVec(27,16.5,47),       CreateVec(1,1,1)*0.999, SPEC) );//Mirror
-  sph.add( SphereClass.Create(16.5,CreateVec(73,16.5,88),       CreateVec(1,1,1)*0.999, REFR) );//Glass
-  sph.add( SphereClass.Create(8.5, CreateVec(50,8.5,60),        CreateVec(1,1,1)*0.999, DIFF) );//Middle
-end;
-
-// tone mapping and gamma correction
-function toInt(x:real):integer;
-begin
-    result:=trunc(power( 1-exp(-x) ,1/2.2)*255+0.5); 
-end;
-function ToByteColor(x:real):byte;
-begin
-   result:=trunc(power(1-exp(-x),1/2.2)*255+0.5); 
-end;
-
-function ColToRGB(c:VecRecord):rgbColor;
-begin
-  result.r:=ToByteColor(c.x);
-  result.g:=ToByteColor(c.y);
-  result.b:=ToByteColor(c.z);
+  sph.add( SphereClass.Create(1e5, Vec3.new( 1e5+1,40.8,81.6), Vec3.new(0.75,0.25,0.25),DIFF) );//Left
+  sph.add( SphereClass.Create(1e5, Vec3.new(-1e5+99,40.8,81.6),Vec3.new(0.25,0.25,0.75),DIFF) );//Right
+  sph.add( SphereClass.Create(1e5, Vec3.new(50,40.8, 1e5),     Vec3.new(0.75,0.75,0.75),DIFF) );//Back
+  sph.add( SphereClass.Create(1e5, Vec3.new(50,40.8,-1e5+170), Vec3.new(0,0,0),      DIFF) );//Front
+  sph.add( SphereClass.Create(1e5, Vec3.new(50, 1e5, 81.6),    Vec3.new(0.75,0.75,0.75),DIFF) );//Bottomm
+  sph.add( SphereClass.Create(1e5, Vec3.new(50,-1e5+81.6,81.6),Vec3.new(0.75,0.75,0.75),DIFF) );//Top
+  sph.add( SphereClass.Create(16.5,Vec3.new(27,16.5,47),       Vec3.new(1,1,1)*0.999, SPEC) );//Mirror
+  sph.add( SphereClass.Create(16.5,Vec3.new(73,16.5,88),       Vec3.new(1,1,1)*0.999, REFR) );//Glass
+  sph.add( SphereClass.Create(8.5, Vec3.new(50,8.5,60),        Vec3.new(1,1,1)*0.999, DIFF) );//Middle
 end;
 
 // find the closet interection
@@ -251,55 +238,55 @@ begin
 end;
 
 // generate a photon ray from the point light source with QMC
-procedure genp(var pr:RayRecord;var f:VecRecord;i:integer);
+procedure genp(var pr:RayRecord;var f:Vec3;i:integer);
 var
     p,t,st:real;
 begin
-    f := CreateVec(2500,2500,2500)*(PI*4.0); // flux
+    f := Vec3.new(2500,2500,2500)*(PI*4.0); // flux
     p:=2.0*PI*hal(0,i);t:=2.0*arccos(sqrt(1.0-hal(1,i)));
     st:=sin(t);
-    pr.d:=CreateVec(cos(p)*st,cos(t),sin(p)*st);
-    pr.o:=CreateVec(50,60,85);
+    pr.d:=Vec3.new(cos(p)*st,cos(t),sin(p)*st);
+    pr.o:=Vec3.new(50,60,85);
 end;
 
-procedure GenPhoton(var pr:RayRecord;var f:VecRecord;i:integer);
+procedure GenPhoton(var pr:RayRecord;var f:Vec3;i:integer);
 var
     p,t,st:real;
 begin
-   f := CreateVec(2500,2500,2500)*(PI*4.0); // flux
+   f := Vec3.new(2500,2500,2500)*(PI*4.0); // flux
    p:=2.0*PI*hal(0,i);t:=2.0*arccos(sqrt(1.0-hal(1,i)));
    st:=sin(t);
-   pr.d:=CreateVec(cos(p)*st,cos(t),sin(p)*st);
-   pr.o:=CreateVec(50,60,85)+VecNorm(pr.d)*10;
+   pr.d:=Vec3.new(cos(p)*st,cos(t),sin(p)*st);
+   pr.o:=Vec3.new(50,60,85)+pr.d.Norm*10;
 end;
 
 
-procedure trace(r:RayRecord;dpt:integer;m:boolean;fl,adj:VecRecord;i:integer);
+procedure trace(r:RayRecord;dpt:integer;m:boolean;fl,adj:Vec3;i:integer);
 var
   t,p:real;
   id:integer;
   d3:integer;
   obj:SphereClass;
-  x,n,f,nl:VecRecord;
+  x,n,f,nl:Vec3;
   r1,r2,r2s:real;
-  w,u,v,d:VecRecord;
+  w,u,v,d:Vec3;
   hp:pHPoint;
-  hh:VecRecord;
+  hh:Vec3;
   ix,iy,iz:integer;
   pL:pList;
   g:real;
   lr,rr:RayRecord;
   into:boolean;
   nnt,nc,nt,ddn,cos2t,a,b,R0,c,Re,Q:real;
-  td,fa:VecRecord;
+  td,fa:Vec3;
 begin
     inc(dpt);
     IF (intersect(r,t,id)=FALSE) or (dpt>=20) THEN EXIT;
  
     d3:=dpt*3;
     obj := SphereClass(sph[id]); 
-    x:=r.o+r.d*t; n:=VecNorm(x-obj.p); f:=obj.c;
-    IF VecDot(n,r.d)<0 THEN nl:=n else nl:=n*-1;
+    x:=r.o+r.d*t; n:=(x-obj.p).norm; f:=obj.c;
+    IF n*r.d<0 THEN nl:=n else nl:=n*-1;
     IF (f.x>f.y)and(f.x>f.z) THEN
       p:=f.x
     ELSE IF f.y>f.z THEN 
@@ -315,17 +302,17 @@ begin
         r1:=2.*PI*hal(d3-1,i);r2:=hal(d3+0,i);r2s:=sqrt(r2);
         w:=nl;
         IF abs(w.x)>0.1 THEN
-           u:=CreateVec(0,1,0) 
+           u:=Vec3.new(0,1,0) 
         ELSE BEGIN
-           u:=VecNorm( VecCross(CreateVec(1,0,0),w ) );
+           u:=(Vec3.new(1,0,0)/w ).norm;
         END;
-        v:=VecCross(w,u);d := VecNorm(u*cos(r1)*r2s + v*sin(r1)*r2s + w*sqrt(1-r2));
+        v:=(w / u);d := (u*cos(r1)*r2s + v*sin(r1)*r2s + w*sqrt(1-r2)).norm;
 
         if m THEN BEGIN
             // eye ray
             // store the measurment point
             New(hp); 
-            hp^.f:=VecMul(f,adj); 
+            hp^.f:=f.Mult(adj); 
             hp^.pos:=x;
             hp^.nrm:=n; 
             hp^.pix := pixel_index; 
@@ -347,33 +334,33 @@ begin
                     pL:= pL^.next; 
                     v := hp^.pos - x;
                     // check normals to be closer than 90 degree (avoids some edge brightning)
-                    if (VecDot(hp^.nrm,n) > 1e-3) and (VecDot(v,v) <= hp^.r2) THEN BEGIN
+                    if (hp^.nrm*n > 1e-3) and (v*v <= hp^.r2) THEN BEGIN
                         // unlike N in the paper, hitpoint->n stores "N / ALPHA" to make it an integer value
                         g := (hp^.n*ALPHA+ALPHA) / (hp^.n*ALPHA+1.0);
                         hp^.r2:=hp^.r2*g; 
                         inc(hp^.n);
-                        hp^.flux:=(hp^.flux+VecMul(hp^.f,fl)*(1.0/PI))*g;
+                        hp^.flux:=(hp^.flux+hp^.f.Mult(fl)*(1.0/PI))*g;
                     END;
                 END;
             END;
-            IF hal(d3+1,i)<p THEN trace(CreateRay(x,d),dpt,m,VecMul(f,fl)*(1/p),adj,i);
+            IF hal(d3+1,i)<p THEN trace(RayRecord.new(x,d),dpt,m,f.Mult(fl)*(1/p),adj,i);
         END;
     END;(*DIFF*)
     SPEC:BEGIN
      // mirror
-       trace(CreateRay(x, r.d-n*2.0*VecDot(n,r.d)), dpt, m, VecMul(f,fl), VecMul(f,adj),i);
+       trace(RayRecord.new(x, r.d-n*2.0*(n*r.d)), dpt, m,f.Mult(fl), f.Mult(adj),i);
 
     END;(*SPEC*)
     REFR:BEGIN
         // glass
-        lr:=CreateRay(x,r.d-n*2.0*VecDot(n,r.d)); 
-        into := (VecDot(n,nl)>0.0);
+        lr:=RayRecord.new(x,r.d-n*2.0*(n*r.d) ); 
+        into := ((n*nl)>0.0);
         nc := 1.0; nt:=1.5;
         if into then 
            nnt:=nc/nt
         else 
            nnt:=nt/nc;
-        ddn := VecDot(r.d,nl);
+        ddn := (r.d*nl);
         cos2t:=1-nnt*nnt*(1-ddn*ddn);
 
         // total internal reflection
@@ -383,10 +370,10 @@ begin
         end;
 
         IF into then Q:=1 ELSE Q:=-1;
-        td := VecNorm( r.d*nnt - n*(Q*( ddn*nnt+sqrt(cos2t) )) );
-        IF into then Q:=-ddn else Q:=VecDot(td,n);
+        td := ( r.d*nnt - n*(Q*( ddn*nnt+sqrt(cos2t) )) ).norm;
+        IF into then Q:=-ddn else Q:=td*n;
         a:=nt-nc; b:=nt+nc; R0:=a*a/(b*b); c := 1-Q;
-        Re:=R0+(1-R0)*c*c*c*c*c; P:=Re; rr:=CreateRay(x,td); fa:=VecMul(f,adj);
+        Re:=R0+(1-R0)*c*c*c*c*c; P:=Re; rr:=RayRecord.new(x,td); fa:=f.Mult(adj);
         if m THEN BEGIN
             // eye ray (trace both rays)
             trace(lr,dpt,m,fl,fa*Re,i);
@@ -418,18 +405,18 @@ end;
 
 
 var
-  w,h,samps,y,x	: integer;
-  i,j,m		: integer;
-  cam,r		: RayRecord;
-  d,cx,cy,vw,f	: VecRecord;
-  c		: array of VecRecord;
-  BMPIO		: BMPIOClass;
-  p		: real;
-  lst		: pList;
-  hp		: pHPoint;
-  T1,T2		: TDateTime;
-  HH,MM,SS,MS	: WORD;
-  co		: char;
+   w,h,samps,y,x	: integer;
+   i,j,m		: integer;
+   cam,r		: RayRecord;
+   d,cx,cy,vw,f	: Vec3;
+   c		: array of Vec3;
+   BMPIO		: BMPRecord;
+   p		: real;
+   lst		: pList;
+   hp		: pHPoint;
+   T1,T2		: TDateTime;
+   HH,MM,SS,MS	: WORD;
+   co		: char;
    ArgInt	: integer;
    ArgFN,FN		: String;
 BEGIN
@@ -467,7 +454,7 @@ BEGIN
     end; { case }
   until co=endofoptions;
    
-    BMPIO:=BMPIOClass.Create(w,h);
+    BMPIO.new(w,h);
     IF ParamCount>=1 THEN 
        samps:=StrToInt(ParamStr(1) )
     ELSE
@@ -476,8 +463,8 @@ BEGIN
   Writeln ('The time is : ',TimeToStr(Time));
 
     // trace eye rays and store measurement points
-    cam:=CreateRay(CreateVec(50,48,295.6), VecNorm(CreateVec(0,-0.042612,-1)) );
-    cx:=CreateVec(w*0.5135/h,0,0); cy:=VecNorm(VecCross(cx,cam.d))*0.5135;
+    cam:=RayRecord.new(Vec3.new(50,48,295.6), (Vec3.new(0,-0.042612,-1)).norm );
+    cx:=Vec3.new(w*0.5135/h,0,0); cy:=((cx / cam.d)).norm*0.5135;
     
     SetLength(c,w*h);
 
@@ -488,11 +475,11 @@ BEGIN
         for x:=0 to w-1 do begin
             pixel_index := x + y * w;
             d := cx * ((x + 0.5) / w - 0.5) + cy * (-(y + 0.5) / h + 0.5)+cam.d;
-            trace(CreateRay(cam.o + d * 140, VecNorm(d) ), 
+            trace(RayRecord.new(cam.o + d * 140, d.norm ), 
                   0,
                   true,
-                  CreateVec(0,0,0),
-                  CreateVec(1, 1, 1),
+                  Vec3.new(0,0,0),
+                  Vec3.new(1, 1, 1),
                   0);
         end;
     end;
@@ -503,7 +490,7 @@ writeln(' Before Hash');
     
     // trace photon rays with multi-threading
     num_photon:=samps; 
-    vw:=CreateVec(1,1,1);
+    vw:=Vec3.new(1,1,1);
 //    #pragma omp parallel for schedule(dynamic, 1)
     for i:=0 to num_photon-1 do begin
         p:=100*(i+1)/num_photon;
@@ -533,12 +520,10 @@ writeln(' Before Hash');
     // save the image after tone mapping and gamma correction
     for y:=0 to h-1 do begin
       for x:=0 to w-1 do begin
-        BMPIO.SetPixel(x,h-1-y,ColToRGB(c[x+y*w]) );
+        BMPIO.SetPixel(x,h-1-y,ColToRGB( ClampVector(c[x+y*w]) ) );
       end;
     end;
-    BMPIO.WriteBMPFile(FN);
+    BMPIO.WriteFile(FN);
 end.
 
-(*$Log: smallppm_exp.pas,v $*)
-(*Revision 1.3  2018/02/04 12:17:57  average*)
-(*BMP Write Bug Fix*)
+
